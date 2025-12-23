@@ -69,10 +69,6 @@ In **WP Mirror → Settings** configure:
 
 ---
 
-## GitHub Pages notes
-
----
-
 ## GitHub token permissions (PAT)
 
 Recommended: define a token in `wp-config.php`:
