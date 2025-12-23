@@ -1,65 +1,71 @@
-# WP Mirror (wpmirror)
+# WP Mirror
 
-WP Mirror is a production-grade WordPress plugin that exports a dynamic WordPress site into a **self-contained static site**, optionally creates **ZIP archives**, and can **deploy exported files to GitHub** (GitHub Pages compatible).
+WP Mirror exports a dynamic WordPress site into a **self-contained static site**, optionally creates **ZIP archives**, and can **deploy the exported files to GitHub** (GitHub Pages compatible).
 
-- ✅ Static export (HTML + required assets)
-- ✅ Asset modes: **Referenced-only** (recommended) and **Balanced**
-- ✅ ZIP archive creation + download/delete in admin UI
-- ✅ GitHub deploy using the Git Data API (blobs → tree → commit → ref update)
-- ✅ Background processing via WP-Cron ticks (prevents long admin requests / 504s)
-- ✅ AJAX progress UI + detailed logs
-- ✅ Manifest-based “skip unchanged” deploys
-- ✅ No tracking. No phone-home. GPL-compatible
+- **No tracking. No phone-home.** The plugin only contacts GitHub when you explicitly click **Deploy to GitHub**.
+- **No remote executable code. No non‑GPL libraries.**
+- **Background jobs**: export, asset copying, ZIP creation, and GitHub deploy are processed in small WP‑Cron ticks to avoid long admin requests / 504s.
 
-## Downloads
+## Repo structure
 
-- **Recommended:** Download packaged ZIPs from the **GitHub Releases** page:
-  - `wp-mirror-plugin-1.0.2.zip` (recommended)
-  - `wp-mirror-plugin-1.0.1-fixed.zip`
+```
+wp-mirror/
+  wp-mirror.php
+  includes/
+  admin/
+  languages/
+  assets/               # wp.org images (banner/icon/screenshots)
+  readme.txt            # WordPress.org format
+  README.md
+  LICENSE
+  SECURITY_NOTES.md
+  PUBLISHING_NOTES.md
+```
 
-- **Alternative:** The same ZIP files are available in the repository under `dist/`.
+## Quick start (local / staging)
 
-## Installation
+1. Install the plugin (`wp-mirror/` folder) into `wp-content/plugins/`.
+2. Activate **WP Mirror**.
+3. Go to **WP Mirror** (top-level menu).
+4. Set:
+   - **Public Base URL** (your production/static base URL)
+   - **Export Directory** (absolute server path)
+   - Asset scope (use **Referenced-only** to keep file counts small)
+5. Click **Generate Static Export**.
+6. (Optional) Enable GitHub deploy settings and click **Deploy to GitHub**.
 
-### Option A: Install from ZIP
-1. Download a ZIP from `dist/`
-2. WordPress Admin → Plugins → Add New → Upload Plugin
-3. Activate **WP Mirror**
-4. WP Admin → **WP Mirror** (top-level menu)
+## GitHub PAT permissions (recommended)
 
-### Option B: Install from source
-Copy the `wp-mirror/` folder into:
-`wp-content/plugins/wp-mirror/`  
-Then activate it in WP Admin.
+Minimal scope depends on whether your repo is public/private and your org policies. Typical working option:
 
-## Configuration (important)
+- Fine-grained PAT:
+  - **Repository access**: only the target repo
+  - **Permissions**: Contents **Read and write** (and Metadata Read)
 
-In **WP Mirror → Settings** set:
-
-- **Public Base URL** (this is what exported links will be rewritten to)
-  - Example: `https://new.domain.com`
-- **Export Directory** (absolute server path, writable)
-  - Example: `/var/www/html/wp-mirror-export`
-- **Asset scope mode**
-  - Use **Referenced-only** to keep file counts small
-
-## Usage
-
-1. Click **Generate Static Export**
-2. (Optional) Enable ZIP and generate archive
-3. (Optional) Configure GitHub and click **Deploy to GitHub**
-4. Watch progress + logs (UI polls status via AJAX)
-
-## GitHub Pages notes
-
-- Use branch `gh-pages` (default) or a `/docs` prefix if you prefer
-- Optional:
-  - `.nojekyll` to prevent Jekyll processing
-  - `CNAME` if using a custom domain
-
-## GitHub Token (PAT)
-
-Recommended: define it in `wp-config.php` so it is not stored in the database:
+Store it as a constant (preferred):
 
 ```php
 define('WP_MIRROR_GITHUB_TOKEN', 'YOUR_TOKEN_HERE');
+```
+
+If you don't set the constant, WP Mirror can store the token in WP options (database) via Settings.
+
+## GitHub Pages extras
+
+- Writes `.nojekyll` (optional)
+- Writes `CNAME` if you set a custom domain
+- Supports a **path prefix** (e.g., `docs/`)
+
+## Screenshots placeholders
+
+- `assets/banner-1544x500.png`
+- `assets/icon-256x256.png`
+- `assets/screenshot-1.png` (Settings screen)
+- `assets/screenshot-2.png` (Progress/logs screen)
+- `assets/screenshot-3.png` (ZIP archives list)
+
+## Developer notes
+
+- Export/ZIP/deploy runs via `wp_schedule_single_event()` on the `wp_mirror_run_jobs` hook.
+- UI polls status via `admin-ajax.php` every ~3 seconds.
+- Deploy uses GitHub **Git Data API** (blobs → tree → commit → update ref) and skips unchanged files using `.wp-mirror-manifest.json`.
