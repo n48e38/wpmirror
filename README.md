@@ -13,14 +13,12 @@ WP Mirror is a production-grade WordPress plugin that exports a dynamic WordPres
 
 ## Downloads
 
-Packaged builds are stored in [`dist/`](./dist):
+Packaged builds are stored in [Releases](https://github.com/n48e38/wpmirror/releases):
 
 - `wp-mirror-plugin-1.0.1-fixed.zip`
 - `wp-mirror-plugin-1.0.2.zip` 
 - `wp-mirror-plugin-1.0.3.zip` (recommended)
-- 'wp-mirror-plugin-1.0.4' to do
 
-> Tip: For a nicer UX, also publish these as **GitHub Releases** and attach the ZIPs there.
 
 ## Installation
 
