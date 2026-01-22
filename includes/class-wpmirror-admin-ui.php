@@ -90,6 +90,31 @@ final class WPMirror_Admin_UI {
             exit;
         }
 
+if ( $action === 'restore_archive' ) {
+            $file = isset( $_POST['archive_file'] ) ? wp_normalize_path( sanitize_text_field( wp_unslash( $_POST['archive_file'] ) ) ) : '';
+            $confirm = isset( $_POST['confirm_restore'] ) ? absint( $_POST['confirm_restore'] ) : 0;
+
+            if ( $confirm !== 1 ) {
+                wp_safe_redirect( add_query_arg( 'wp_mirror_notice', 'confirm_restore', admin_url( 'admin.php?page=wp-mirror' ) ) );
+                exit;
+            }
+
+            $allowed_dir = trailingslashit( wp_normalize_path( $export_dir ) ) . '_archives/';
+            if ( ! $file || strpos( $file, $allowed_dir ) !== 0 || ! is_file( $file ) ) {
+                wp_die( esc_html__( 'Invalid archive file.', 'wp-mirror' ) );
+            }
+
+            $state = $this->jobs->get_state();
+            if ( in_array( (string) $state['status'], array( 'running', 'paused' ), true ) ) {
+                wp_safe_redirect( add_query_arg( 'wp_mirror_notice', 'job_running', admin_url( 'admin.php?page=wp-mirror' ) ) );
+                exit;
+            }
+
+            $this->jobs->start_restore( $file );
+            wp_safe_redirect( admin_url( 'admin.php?page=wp-mirror' ) );
+            exit;
+        }
+
 if ( $action === 'delete_archive' ) {
             $file = isset( $_POST['archive_file'] ) ? wp_normalize_path( sanitize_text_field( wp_unslash( $_POST['archive_file'] ) ) ) : '';
             $allowed_dir = trailingslashit( wp_normalize_path( $export_dir ) ) . '_archives/';
@@ -119,6 +144,10 @@ if ( $action === 'delete_archive' ) {
   <?php $n = sanitize_text_field( wp_unslash( $_GET['wp_mirror_notice'] ) ); ?>
   <?php if ( $n === 'confirm_clean' ) : ?>
     <div class="notice notice-warning"><p><?php echo esc_html__( 'Remote clean-up is enabled. Please confirm the clean-removed option on the Deploy form to proceed.', 'wp-mirror' ); ?></p></div>
+  <?php elseif ( $n === 'confirm_restore' ) : ?>
+    <div class="notice notice-warning"><p><?php echo esc_html__( 'Restore will overwrite the current export directory contents. Please confirm the restore checkbox to proceed.', 'wp-mirror' ); ?></p></div>
+  <?php elseif ( $n === 'job_running' ) : ?>
+    <div class="notice notice-warning"><p><?php echo esc_html__( 'A WP Mirror job is currently running. Please wait for it to finish before starting a restore.', 'wp-mirror' ); ?></p></div>
   <?php endif; ?>
 <?php endif; ?>
 <div class="wrap wp-mirror-wrap">
@@ -349,6 +378,17 @@ if ( $action === 'delete_archive' ) {
                                             <form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" class="wp-mirror-inline-form">
                                                 <?php wp_nonce_field( 'wp_mirror_action', 'wp_mirror_nonce' ); ?>
                                                 <input type="hidden" name="action" value="wp_mirror_action" />
+                                                <input type="hidden" name="wp_mirror_do" value="restore_archive" />
+                                                <input type="hidden" name="archive_file" value="<?php echo esc_attr( $a['file'] ); ?>" />
+                                                <label style="margin-right:6px;">
+                                                    <input type="checkbox" name="confirm_restore" value="1" />
+                                                    <?php echo esc_html__( 'Confirm restore', 'wp-mirror' ); ?>
+                                                </label>
+                                                <?php submit_button( __( 'Restore', 'wp-mirror' ), 'secondary', 'submit', false ); ?>
+                                            </form>
+                                            <form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" class="wp-mirror-inline-form">
+                                                <?php wp_nonce_field( 'wp_mirror_action', 'wp_mirror_nonce' ); ?>
+                                                <input type="hidden" name="action" value="wp_mirror_action" />
                                                 <input type="hidden" name="wp_mirror_do" value="delete_archive" />
                                                 <input type="hidden" name="archive_file" value="<?php echo esc_attr( $a['file'] ); ?>" />
                                                 <?php submit_button( __( 'Delete', 'wp-mirror' ), 'delete', 'submit', false ); ?>
@@ -361,7 +401,7 @@ if ( $action === 'delete_archive' ) {
                         </table>
                     <?php endif; ?>
 
-                    <p class="description"><?php echo esc_html__( 'WP Mirror writes exports/archives to the server filesystem. Browser download links are intentionally not exposed by default.', 'wp-mirror' ); ?></p>
+                    <p class="description"><?php echo esc_html__( 'WP Mirror writes exports/archives to the server filesystem. Use the actions above to Download, Restore, or Delete archives.', 'wp-mirror' ); ?></p>
                 </div>
             </div>
         </div>

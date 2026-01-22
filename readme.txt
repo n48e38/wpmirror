@@ -4,7 +4,7 @@ Tags: static site, export, github pages, deployment, performance, security
 Requires at least: 6.0
 Tested up to: 6.9
 Requires PHP: 7.4
-Stable tag: 1.0.2
+Stable tag: 1.0.3.1
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/old-licenses/gpl-2.0.html
 
@@ -56,6 +56,12 @@ No. WP Mirror never copies PHP files into exports or ZIPs, and skips PHP during 
 Yes. Jobs are broken into small background ticks via WP-Cron. The admin page starts a job and returns immediately.
 
 == Changelog ==
+
+= 1.0.3.1 =
+* Fix: plugin activation error caused by an accidental stray modifier in the background jobs class.
+
+= 1.0.3 =
+* Added: Restore export directory from a WP Mirror archive ZIP (background job with progress + logs).
 
 = 1.0.2 =
 * Improved URL rewriting to reliably replace staging domain in HTML attributes, srcset, inline CSS, and JSON-escaped URLs.

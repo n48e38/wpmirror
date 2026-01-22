@@ -27,6 +27,8 @@ final class WPMirror_Zip {
             $abs = wp_normalize_path( $file->getPathname() );
 
             if ( strpos( $abs, trailingslashit( $export_dir ) . '_archives/' ) === 0 ) { continue; }
+            if ( strpos( $abs, trailingslashit( $export_dir ) . '_previous/' ) === 0 ) { continue; }
+            if ( strpos( $abs, trailingslashit( $export_dir ) . '_tmp_restore/' ) === 0 ) { continue; }
             if ( preg_match( '/\.php$/i', $abs ) ) { continue; }
             $out[] = $abs;
         }

@@ -11,6 +11,7 @@ final class WPMirror_Background_Jobs {
     private $exporter;
     private $zipper;
     private $github;
+    private $restore;
 
     public function __construct( WPMirror_Settings $settings ) {
         $this->settings = $settings;
@@ -18,6 +19,7 @@ final class WPMirror_Background_Jobs {
         $this->exporter = new WPMirror_Exporter( $settings, $this->assets );
         $this->zipper   = new WPMirror_Zip();
         $this->github   = new WPMirror_GitHub();
+        $this->restore  = new WPMirror_Restore();
     }
 
     public function default_state() : array {
@@ -34,6 +36,7 @@ final class WPMirror_Background_Jobs {
             'errors'           => array(),
             'export'           => array(),
             'deploy'           => array(),
+            'restore'          => array(),
             'cancel_requested' => 0,
         );
     }
@@ -166,6 +169,38 @@ final class WPMirror_Background_Jobs {
         $this->schedule_tick( 3 );
     }
 
+    public function start_restore( string $archive_file ) : void {
+        $s = $this->settings->get();
+
+        $state = $this->default_state();
+        $state['job_id'] = wp_generate_uuid4();
+        $state['type'] = 'restore';
+        $state['status'] = 'running';
+        $state['stage'] = 'prepare';
+        $state['started_at'] = time();
+        $state['message'] = __( 'Restore started.', 'wp-mirror' );
+
+        $state['restore'] = array(
+            'export_dir'     => (string) $s['export_dir'],
+            'archive_file'   => wp_normalize_path( $archive_file ),
+            'tmp_dir'        => '',
+            'backup_dir'     => '',
+            'zip_num_files'  => 0,
+            'eligible_total' => 0,
+            'eligible_done'  => 0,
+            'next_index'     => 0,
+        );
+
+        $state['progress'] = array( 'current' => 0, 'total' => 0 );
+        $state['updated_at'] = time();
+
+        $this->update_state( $state );
+        $this->log( 'Restore started: ' . basename( $archive_file ) );
+
+        $this->schedule_tick( 1 );
+    }
+
+
     public function cron_tick() : void {
         $this->with_lock( function() {
             $state = $this->get_state();
@@ -185,6 +220,7 @@ final class WPMirror_Background_Jobs {
 
             if ( $state['type'] === 'export' ) { $this->run_export_tick( $state ); return; }
             if ( $state['type'] === 'deploy' ) { $this->run_deploy_tick( $state ); return; }
+            if ( $state['type'] === 'restore' ) { $this->run_restore_tick( $state ); return; }
         } );
     }
 
@@ -510,6 +546,8 @@ final class WPMirror_Background_Jobs {
 
             $rel = ltrim( str_replace( trailingslashit( $export_dir ), '', $abs ), '/' );
             if ( strpos( $rel, '_archives/' ) === 0 ) { continue; }
+            if ( strpos( $rel, '_previous/' ) === 0 ) { continue; }
+            if ( strpos( $rel, '_tmp_restore/' ) === 0 ) { continue; }
             if ( $rel === '.wp-mirror-manifest.json' ) { continue; }
             if ( preg_match( '/\.php$/i', $rel ) ) { continue; }
 
@@ -846,7 +884,243 @@ final class WPMirror_Background_Jobs {
         $this->schedule_tick( min( 300, max( 30, $until - time() ) ) );
     }
 
-    public function ajax_status() : void {
+	/**
+     * Restore export directory from a WP Mirror export archive ZIP.
+     *
+     * Stages:
+     *  - prepare: create tmp/backup dirs, compute eligible entry total
+     *  - extract: extract ZIP entries in batches into tmp dir
+     *  - swap: move current export content (except _archives/_previous/_tmp_restore) into backup dir and swap restored content in
+     *  - finalize: rebuild manifest + folder stats
+     */
+    private function run_restore_tick( array $state ) : void {
+        $r = $state['restore'] ?? array();
+        $export_dir = wp_normalize_path( (string) ( $r['export_dir'] ?? '' ) );
+        $archive = wp_normalize_path( (string) ( $r['archive_file'] ?? '' ) );
+
+        if ( ! $export_dir || ! $archive ) {
+            $this->fail( __( 'Restore misconfigured (missing paths).', 'wp-mirror' ) );
+            return;
+        }
+
+        if ( ! is_file( $archive ) ) {
+            $this->fail( __( 'Restore archive not found.', 'wp-mirror' ) );
+            return;
+        }
+
+        if ( ! class_exists( 'ZipArchive' ) ) {
+            $this->fail( __( 'ZipArchive is not available on this server.', 'wp-mirror' ) );
+            return;
+        }
+
+        // Ensure special dirs.
+        $tmp_parent = trailingslashit( $export_dir ) . '_tmp_restore';
+        $prev_parent = trailingslashit( $export_dir ) . '_previous';
+        wp_mkdir_p( $tmp_parent );
+        wp_mkdir_p( $prev_parent );
+
+        $batch = 200;
+
+        if ( $state['stage'] === 'prepare' ) {
+            $job_id = (string) $state['job_id'];
+            $tmp_dir = trailingslashit( $tmp_parent ) . $job_id;
+            if ( is_dir( $tmp_dir ) ) {
+                $this->restore->delete_dir( $tmp_dir );
+            }
+            if ( ! wp_mkdir_p( $tmp_dir ) ) {
+                $this->fail( __( 'Failed to create restore temp directory.', 'wp-mirror' ) );
+                return;
+            }
+
+            $zip = new ZipArchive();
+            if ( true !== $zip->open( $archive ) ) {
+                $this->fail( __( 'Failed to open restore archive.', 'wp-mirror' ) );
+                return;
+            }
+
+            $num = (int) $zip->numFiles;
+            $eligible = 0;
+            for ( $i = 0; $i < $num; $i++ ) {
+                $name = (string) $zip->getNameIndex( $i );
+                if ( $name === '' ) { continue; }
+                if ( substr( $name, -1 ) === '/' ) { continue; } // dir
+                $safe = $this->restore->sanitize_entry_path( $name );
+                if ( is_wp_error( $safe ) ) { continue; }
+                $eligible++;
+            }
+            $zip->close();
+
+            $state['restore']['tmp_dir'] = $tmp_dir;
+            $state['restore']['zip_num_files'] = $num;
+            $state['restore']['eligible_total'] = $eligible;
+            $state['restore']['eligible_done'] = 0;
+            $state['restore']['next_index'] = 0;
+
+            $state['progress']['current'] = 0;
+            $state['progress']['total'] = max( 1, $eligible );
+            $state['stage'] = 'extract';
+            $state['message'] = __( 'Preparing restore (scanned archive).', 'wp-mirror' );
+            $this->update_state( $state );
+            $this->log( 'Restore prepare complete. Eligible entries: ' . (string) $eligible );
+            $this->schedule_tick( 2 );
+            return;
+        }
+
+        if ( $state['stage'] === 'extract' ) {
+            $tmp_dir = wp_normalize_path( (string) ( $state['restore']['tmp_dir'] ?? '' ) );
+            if ( ! $tmp_dir || ! is_dir( $tmp_dir ) ) {
+                $this->fail( __( 'Restore temp directory missing.', 'wp-mirror' ) );
+                return;
+            }
+
+            $zip = new ZipArchive();
+            if ( true !== $zip->open( $archive ) ) {
+                $this->fail( __( 'Failed to open restore archive.', 'wp-mirror' ) );
+                return;
+            }
+
+            $num = (int) ( $state['restore']['zip_num_files'] ?? 0 );
+            $next = (int) ( $state['restore']['next_index'] ?? 0 );
+            $done = (int) ( $state['restore']['eligible_done'] ?? 0 );
+
+            $processed = 0;
+            $max = min( $num, $next + $batch );
+
+            for ( $i = $next; $i < $max; $i++ ) {
+                $name = (string) $zip->getNameIndex( $i );
+                if ( $name === '' ) { continue; }
+                if ( substr( $name, -1 ) === '/' ) { continue; }
+
+                $safe_rel = $this->restore->sanitize_entry_path( $name );
+                if ( is_wp_error( $safe_rel ) ) { continue; }
+
+                $dest = trailingslashit( $tmp_dir ) . $safe_rel;
+                $dest = wp_normalize_path( $dest );
+
+                // Ensure destination stays inside tmp_dir.
+                if ( strpos( $dest, trailingslashit( $tmp_dir ) ) !== 0 ) {
+                    continue;
+                }
+
+                $err = $this->restore->extract_entry_stream( $zip, $name, $dest );
+                if ( is_wp_error( $err ) ) {
+                    $this->log( 'Restore extract error: ' . $err->get_error_message() );
+                    $state['errors'][] = $err->get_error_message();
+                } else {
+                    $done++;
+                }
+
+                $processed++;
+            }
+
+            $zip->close();
+
+            $state['restore']['next_index'] = $max;
+            $state['restore']['eligible_done'] = $done;
+
+            $state['progress']['current'] = min( $done, (int) $state['progress']['total'] );
+            $state['message'] = sprintf( __( 'Restoring files: %1$d / %2$d', 'wp-mirror' ), $done, (int) $state['progress']['total'] );
+            $this->update_state( $state );
+
+            if ( $max >= $num ) {
+                $state['stage'] = 'swap';
+                $state['message'] = __( 'Restore extraction complete. Swapping files…', 'wp-mirror' );
+                $this->update_state( $state );
+                $this->log( 'Restore extraction complete.' );
+                $this->schedule_tick( 2 );
+                return;
+            }
+
+            $this->schedule_tick( 2 );
+            return;
+        }
+
+        if ( $state['stage'] === 'swap' ) {
+            $tmp_dir = wp_normalize_path( (string) ( $state['restore']['tmp_dir'] ?? '' ) );
+            if ( ! $tmp_dir || ! is_dir( $tmp_dir ) ) {
+                $this->fail( __( 'Restore temp directory missing.', 'wp-mirror' ) );
+                return;
+            }
+
+            $ts = gmdate( 'Ymd-His' );
+            $backup_dir = trailingslashit( $prev_parent ) . 'restore-' . $ts . '-' . substr( (string) $state['job_id'], 0, 8 );
+            $backup_dir = wp_normalize_path( $backup_dir );
+            if ( ! wp_mkdir_p( $backup_dir ) ) {
+                $this->fail( __( 'Failed to create backup directory for restore.', 'wp-mirror' ) );
+                return;
+            }
+
+            // Move existing export content to backup dir, but keep special folders.
+            $special = array(
+                '_archives'    => true,
+                '_previous'    => true,
+                '_tmp_restore' => true,
+            );
+
+            $entries = @scandir( $export_dir );
+            if ( is_array( $entries ) ) {
+                foreach ( $entries as $e ) {
+                    if ( $e === '.' || $e === '..' ) { continue; }
+                    if ( isset( $special[ $e ] ) ) { continue; }
+                    $src = wp_normalize_path( trailingslashit( $export_dir ) . $e );
+                    $dst = wp_normalize_path( trailingslashit( $backup_dir ) . $e );
+                    $err = $this->restore->move_path( $src, $dst );
+                    if ( is_wp_error( $err ) ) {
+                        $this->log( 'Backup move error: ' . $err->get_error_message() );
+                        $state['errors'][] = $err->get_error_message();
+                    }
+                }
+            }
+
+            // Move restored content into export dir.
+            $tmp_entries = @scandir( $tmp_dir );
+            if ( is_array( $tmp_entries ) ) {
+                foreach ( $tmp_entries as $e ) {
+                    if ( $e === '.' || $e === '..' ) { continue; }
+                    $src = wp_normalize_path( trailingslashit( $tmp_dir ) . $e );
+                    $dst = wp_normalize_path( trailingslashit( $export_dir ) . $e );
+                    $err = $this->restore->move_path( $src, $dst );
+                    if ( is_wp_error( $err ) ) {
+                        $this->log( 'Restore move error: ' . $err->get_error_message() );
+                        $state['errors'][] = $err->get_error_message();
+                    }
+                }
+            }
+
+            // Cleanup tmp dir.
+            $this->restore->delete_dir( $tmp_dir );
+
+            $state['restore']['backup_dir'] = $backup_dir;
+            $state['stage'] = 'finalize';
+            $state['message'] = __( 'Restore swapped. Finalizing…', 'wp-mirror' );
+            $this->update_state( $state );
+            $this->log( 'Restore swap complete. Backup: ' . basename( $backup_dir ) );
+            $this->schedule_tick( 2 );
+            return;
+        }
+
+        if ( $state['stage'] === 'finalize' ) {
+            // Rebuild manifest for deploy skip-unchanged.
+            $manifest = $this->build_manifest( $export_dir );
+            $manifest_path = trailingslashit( $export_dir ) . '.wp-mirror-manifest.json';
+            file_put_contents( $manifest_path, wp_json_encode( $manifest, JSON_PRETTY_PRINT ) );
+
+            $stats = $this->folder_stats( $export_dir );
+            $state['export']['result'] = array(
+                'file_count'   => (int) ( $stats['file_count'] ?? 0 ),
+                'total_bytes'  => (int) ( $stats['total_bytes'] ?? 0 ),
+                'manifest_path'=> $manifest_path,
+            );
+
+            $state['status'] = 'completed';
+            $state['stage'] = 'restore';
+            $state['message'] = __( 'Restore completed.', 'wp-mirror' );
+            $this->update_state( $state );
+            $this->log( 'Restore completed.' );
+            return;
+        }
+    }
+function ajax_status() : void {
         if ( ! current_user_can( 'manage_options' ) ) {
             wp_send_json_error( array( 'message' => __( 'Forbidden', 'wp-mirror' ) ), 403 );
         }
