@@ -18,6 +18,7 @@ Packaged builds are stored in [`dist/`](./dist):
 - `wp-mirror-plugin-1.0.1-fixed.zip`
 - `wp-mirror-plugin-1.0.2.zip` 
 - `wp-mirror-plugin-1.0.3.zip` (recommended)
+- wp-mirror-plugin-1.0.4 to do
 
 > Tip: For a nicer UX, also publish these as **GitHub Releases** and attach the ZIPs there.
 
