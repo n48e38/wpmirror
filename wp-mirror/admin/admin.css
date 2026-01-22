@@ -1,0 +1,10 @@
+.wp-mirror-grid{display:grid;grid-template-columns:1fr;gap:16px;}
+@media(min-width:1100px){.wp-mirror-grid{grid-template-columns:1fr 1fr;}.wp-mirror-card:nth-child(3){grid-column:1/span 2;}}
+.wp-mirror-card{background:#fff;border:1px solid #dcdcde;border-radius:8px;padding:16px;}
+.wp-mirror-progress{height:10px;background:#f0f0f1;border-radius:6px;overflow:hidden;border:1px solid #dcdcde;}
+.wp-mirror-progress-bar{height:10px;background:#2271b1;width:0%;}
+.wp-mirror-log{background:#111;color:#eee;padding:10px;border-radius:6px;max-height:260px;overflow:auto;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace;font-size:12px;line-height:1.4;}
+.wp-mirror-errors{margin-top:10px;padding:10px;background:#fff8e5;border:1px solid #f0c36d;border-radius:6px;}
+.wp-mirror-muted{color:#646970;}
+.wp-mirror-inline-form{display:inline-block;margin-right:8px;}
+.wp-mirror-inline-status{margin-left:8px;}
